@@ -370,6 +370,13 @@
    ============================================================ */
 const memoryStore = {};
 let storageAvailable = true;
+// When running inside the Android wrapper, AndroidStorageBridge backs storeGet/storeSet
+// with real files on the device (see AndroidStorageBridge.kt) instead of localStorage,
+// which has a small fixed quota (commonly just 3-10MB) built into the browser engine
+// itself — a limit that has nothing to do with how much free space the device actually
+// has, and applies just the same whether the page is opened in a browser tab or inside a
+// native app's WebView, since either way it's the same browser-engine API doing the saving.
+const nativeStorageAvailable = !!(window.AndroidStorageBridge && typeof window.AndroidStorageBridge.setItem === 'function');
 try {
   const t = '__test__';
   localStorage.setItem(t, '1');
@@ -378,19 +385,41 @@ try {
   storageAvailable = false;
 }
 
-// Tracks whether the MOST RECENT storeSet() call actually reached localStorage. This is
+// One-time migration: the first time this runs after the app gains native storage, copy
+// anything already saved in localStorage into it, so existing declarations/clients/drafts
+// don't appear to vanish just because the underlying storage mechanism changed.
+if (nativeStorageAvailable && storageAvailable) {
+  try {
+    if (!window.AndroidStorageBridge.getItem('__migrated_from_localStorage__')) {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.indexOf('dc_') === 0) {
+          const v = localStorage.getItem(k);
+          if (v !== null) window.AndroidStorageBridge.setItem(k, v);
+        }
+      }
+      window.AndroidStorageBridge.setItem('__migrated_from_localStorage__', '1');
+    }
+  } catch (e) { /* best effort: worst case storeGet's fallback below still finds the data */ }
+}
+
+// Tracks whether the MOST RECENT storeSet() call actually reached persistent storage. This is
 // distinct from `storageAvailable` (which means localStorage is unusable from the start,
 // e.g. inside a sandboxed preview): this flag catches the much sneakier case where storage
 // IS available but a specific write fails partway through — almost always because the saved
 // data (declarations/drafts with embedded floor-plan and PDF-attachment images) no longer
-// fits the browser's storage quota (commonly just 4-10MB). Without this, a failed save was
-// previously 100% silent: the app showed "saved" while nothing was actually persisted, so the
-// data vanished the next time the app was opened.
+// fits the browser's storage quota (commonly just 4-10MB) — not a concern at all anymore when
+// nativeStorageAvailable is true, since that's backed by the device's actual free space.
 let lastStoreWriteOk = true;
 let lastStoreWriteError = null;
 
 function storeGet(key, fallback) {
   try {
+    if (nativeStorageAvailable) {
+      const raw = window.AndroidStorageBridge.getItem(key);
+      if (raw !== null && raw !== undefined) return JSON.parse(raw);
+      // fall through to localStorage in case this particular key predates migration
+    }
     if (storageAvailable) {
       const raw = localStorage.getItem(key);
       return raw !== null ? JSON.parse(raw) : fallback;
@@ -400,6 +429,14 @@ function storeGet(key, fallback) {
 }
 function storeSet(key, value) {
   try {
+    if (nativeStorageAvailable) {
+      const ok = window.AndroidStorageBridge.setItem(key, JSON.stringify(value));
+      lastStoreWriteOk = !!ok;
+      lastStoreWriteError = ok ? null : new Error('Native storage write failed');
+      if (ok) return true;
+      memoryStore[key] = value;
+      return false;
+    }
     if (storageAvailable) {
       localStorage.setItem(key, JSON.stringify(value));
       lastStoreWriteOk = true;
@@ -420,9 +457,14 @@ function storeSet(key, value) {
   }
 }
 
-// Rough estimate of how much of the browser's storage quota this app is using — shown in
-// the Backup section so people can see trouble coming before a save silently fails.
+// Rough estimate of how much storage this app is using — shown in the Backup section so
+// people can see trouble coming before a save silently fails. With native storage this is
+// informational only (backed by the device's free space, not a small fixed quota).
 function estimateStorageUsageKB(){
+  if (nativeStorageAvailable) {
+    try { return Math.round(window.AndroidStorageBridge.getTotalSizeBytes()/1024); }
+    catch(e){ return null; }
+  }
   if(!storageAvailable) return null;
   try {
     let total = 0;
@@ -1674,8 +1716,12 @@ function viewHome(){
     ${(() => {
       const usageKB = estimateStorageUsageKB();
       if(usageKB===null) return '';
-      const isHigh = usageKB > 3000; // most browsers cap localStorage around 4-10MB
-      return `<div class="hint" style="padding:0 16px 10px;margin-top:-6px${isHigh?';color:#E63C3C;font-weight:600':''}">Spazio occupato dai dati salvati: ~${usageKB} KB${isHigh?' — vicino al limite del browser: esporta un backup e valuta di eliminare dichiarazioni/bozze con molte planimetrie o allegati PDF.':''}</div>`;
+      const warnThresholdKB = nativeStorageAvailable ? 512000 : 3000; // ~500MB (real device free-space concern) vs ~3MB (browser quota)
+      const isHigh = usageKB > warnThresholdKB;
+      const warnMsg = nativeStorageAvailable
+        ? ' — piuttosto pieno: valuta di archiviare le dichiarazioni più vecchie con molte planimetrie o allegati.'
+        : ' — vicino al limite del browser: esporta un backup e valuta di eliminare dichiarazioni/bozze con molte planimetrie o allegati PDF.';
+      return `<div class="hint" style="padding:0 16px 10px;margin-top:-6px${isHigh?';color:#E63C3C;font-weight:600':''}">Spazio occupato dai dati salvati: ~${usageKB} KB${isHigh?warnMsg:''}</div>`;
     })()}
     <div class="util-row">
       <div class="util-btn" onclick="onExportBackup()"><span class="ic" style="background:var(--green-tint);color:var(--green)">${ICONS.download}</span> Esporta backup dati <span class="chev">${ICONS.chevron}</span></div>
