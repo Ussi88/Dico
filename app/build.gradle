@@ -1,0 +1,57 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.dichiarazioniconformita.app'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "com.dichiarazioniconformita.app"
+        minSdk 26
+        targetSdk 36
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            // No signing config is set up here on purpose: GitHub Actions builds the
+            // debug APK, which is already self-signed with Android's debug key and can
+            // be installed directly on a phone (after enabling "install unknown apps").
+            // See the workflow / README for how to add real release signing later.
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        viewBinding false
+    }
+}
+
+// Kotlin Gradle Plugin 2.2+ removed the old android.kotlinOptions {} DSL in favor of this
+// top-level kotlin { compilerOptions {} } block (kotlinlang.org/docs/gradle-compiler-options.html).
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
+    }
+}
+
+dependencies {
+    // Versions verified current as of June 2026 against developer.android.com/jetpack/androidx/versions
+    implementation 'androidx.core:core-ktx:1.19.0'
+    implementation 'androidx.appcompat:appcompat:1.7.1'
+    implementation 'androidx.activity:activity-ktx:1.12.4'
+}
