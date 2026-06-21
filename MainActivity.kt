@@ -19,8 +19,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.documentfile.provider.DocumentFile
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
+import org.json.JSONObject
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
@@ -58,6 +60,28 @@ class MainActivity : AppCompatActivity() {
     ) { /* Nothing to do either way: the chooser is shown again without/with the camera
            option next time onShowFileChooser fires. */ }
 
+    private val folderPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+                getSharedPreferences("backup_prefs", MODE_PRIVATE).edit()
+                    .putString(AndroidDownloadBridge.PREF_FOLDER_URI, uri.toString())
+                    .apply()
+                val name = DocumentFile.fromTreeUri(this, uri)?.name ?: "cartella scelta"
+                webView.evaluateJavascript(
+                    "window.onAndroidBackupFolderChosen && window.onAndroidBackupFolderChosen(${JSONObject.quote(name)});",
+                    null
+                )
+            } catch (e: Exception) {
+            }
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,7 +96,10 @@ class MainActivity : AppCompatActivity() {
 
         configureWebView(webView)
 
-        webView.addJavascriptInterface(AndroidDownloadBridge(this), "AndroidDownloadBridge")
+        webView.addJavascriptInterface(
+            AndroidDownloadBridge(this) { folderPickerLauncher.launch(null) },
+            "AndroidDownloadBridge"
+        )
         webView.addJavascriptInterface(AndroidPrintBridge(this), "AndroidPrintBridge")
         webView.addJavascriptInterface(AndroidStorageBridge(this), "AndroidStorageBridge")
 
