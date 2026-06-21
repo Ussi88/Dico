@@ -584,7 +584,37 @@ async function loadSavedBackupHandle(){
   if(handle) backupFileHandle = handle;
 }
 
+// Whether the native Android app exposes its own folder picker (Android's Storage Access
+// Framework, via AndroidDownloadBridge) — a real native folder picker, distinct from and
+// more reliable than the browser-only File System Access API used by FS_ACCESS_SUPPORTED,
+// which doesn't actually work inside this app's WebView (see chooseBackupFolder()/render()
+// below for how the two are kept separate in the UI).
+const NATIVE_FOLDER_PICKER_SUPPORTED = !!(window.AndroidDownloadBridge && typeof window.AndroidDownloadBridge.chooseBackupFolder === 'function');
+let nativeBackupFolderName = null; // populated below if a folder was already chosen in a previous session
+
+function loadNativeBackupFolder(){
+  if(!NATIVE_FOLDER_PICKER_SUPPORTED) return;
+  try{
+    const name = window.AndroidDownloadBridge.getCustomBackupFolderName();
+    if(name) nativeBackupFolderName = name;
+  }catch(e){}
+}
+loadNativeBackupFolder();
+
+// Called by the native Android side after the user picks a folder through the system's
+// native folder picker (see MainActivity.kt's folderPickerLauncher).
+window.onAndroidBackupFolderChosen = function(folderName){
+  nativeBackupFolderName = folderName || 'cartella scelta';
+  toast('Cartella di backup impostata: ' + nativeBackupFolderName);
+  render();
+};
+
 async function onChooseBackupLocation(){
+  if(NATIVE_FOLDER_PICKER_SUPPORTED){
+    try{ window.AndroidDownloadBridge.chooseBackupFolder(); }
+    catch(e){ toast('Impossibile aprire il selettore di cartelle'); }
+    return;
+  }
   if(!FS_ACCESS_SUPPORTED){
     toast('Il tuo browser non permette di scegliere la cartella in questo contesto');
     return;
@@ -654,12 +684,32 @@ function _nativePrint(html){
   try{ window.AndroidPrintBridge.printHtml(html); return true; }
   catch(e){ return false; }
 }
+// Like _nativeSaveBlob, but for the automatic/manual backup file specifically: if the user
+// picked a custom folder via the native picker, write there instead of the default
+// Downloads location.
+function _nativeSaveBackupBlob(blob, filename){
+  if(!window.AndroidDownloadBridge || typeof window.AndroidDownloadBridge.saveFile !== 'function') return false;
+  try{
+    const reader = new FileReader();
+    reader.onload = function(){
+      try{
+        if(NATIVE_FOLDER_PICKER_SUPPORTED && nativeBackupFolderName && typeof window.AndroidDownloadBridge.saveToCustomFolder === 'function'){
+          window.AndroidDownloadBridge.saveToCustomFolder(reader.result, filename, blob.type||'application/octet-stream');
+        } else {
+          window.AndroidDownloadBridge.saveFile(reader.result, filename, blob.type||'application/octet-stream');
+        }
+      } catch(e){ /* native side already shows its own error toast */ }
+    };
+    reader.readAsDataURL(blob);
+    return true;
+  }catch(e){ return false; }
+}
 
 function downloadBackupFile(filenameSuffix){
   const json = JSON.stringify(buildBackupPayload(), null, 2);
   const blob = new Blob([json], {type:'application/json'});
   const filename = `Backup_Certificazioni_Impianti${filenameSuffix}.json`;
-  if(_nativeSaveBlob(blob, filename)) return;
+  if(_nativeSaveBackupBlob(blob, filename)) return;
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -1728,12 +1778,14 @@ function viewHome(){
       <div class="util-btn" onclick="document.getElementById('importFileInput').click()"><span class="ic" style="background:#E8F1FA;color:var(--blue)">${ICONS.upload}</span> Importa backup dati <span class="chev">${ICONS.chevron}</span></div>
       <label class="check-opt ${autoBackupEnabled?'sel':''}" style="margin:0">
         <input type="checkbox" ${autoBackupEnabled?'checked':''} onchange="onToggleAutoBackup()">
-        <span>Backup automatico ad ogni salvataggio${backupFileHandle ? ', su file scelto' : `, in Download/${esc(BACKUP_FOLDER)}`}</span>
+        <span>Backup automatico ad ogni salvataggio${backupFileHandle ? ', su file scelto' : (nativeBackupFolderName ? ', in '+esc(nativeBackupFolderName) : `, in Download/${esc(BACKUP_FOLDER)}`)}</span>
       </label>
-      ${FS_ACCESS_SUPPORTED ? `
+      ${NATIVE_FOLDER_PICKER_SUPPORTED ? `
+      <div class="util-btn" onclick="onChooseBackupLocation()"><span class="ic" style="background:var(--navy-tint);color:var(--navy)">${ICONS.folder}</span> ${nativeBackupFolderName ? 'Cambia cartella di backup ('+esc(nativeBackupFolderName)+')' : 'Scegli dove salvare i backup'} <span class="chev">${ICONS.chevron}</span></div>
+      ` : FS_ACCESS_SUPPORTED ? `
       <div class="util-btn" onclick="onChooseBackupLocation()"><span class="ic" style="background:var(--navy-tint);color:var(--navy)">${ICONS.folder}</span> ${backupFileHandle ? 'Cambia file di backup ('+esc(backupFileHandle.name)+')' : 'Scegli dove salvare i backup'} <span class="chev">${ICONS.chevron}</span></div>
       ` : `
-      <div class="hint" style="padding:8px 4px 0">Per scegliere tu stesso la cartella di destinazione serve aprire questa pagina da un indirizzo web (http/https) in un browser; non è possibile né da file locale né dentro l'app Android. I backup automatici vanno comunque nella cartella Download del dispositivo.</div>
+      <div class="hint" style="padding:8px 4px 0">Per scegliere tu stesso la cartella di destinazione serve aprire questa pagina da un indirizzo web (http/https) in un browser. I backup automatici vanno comunque nella cartella Download del dispositivo.</div>
       `}
     </div>
     <input type="file" id="importFileInput" accept="application/json,.json" style="display:none" onchange="onImportBackup(event)">
