@@ -2,6 +2,7 @@ package com.dichiarazioniconformita.app
 
 import android.content.ContentValues
 import android.content.Context
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.Handler
@@ -10,21 +11,17 @@ import android.provider.MediaStore
 import android.util.Base64
 import android.webkit.JavascriptInterface
 import android.widget.Toast
+import androidx.documentfile.provider.DocumentFile
 import java.io.File
 import java.io.FileOutputStream
 
-/**
- * Exposed to the page as `window.AndroidDownloadBridge`. The web app already builds every
- * exported file (backups, single declaration/draft exports, the generated Word document) as
- * a Blob in JS and normally triggers a browser download via a hidden `<a download>` click —
- * that trick is unreliable inside a WebView for blob: URLs, so when this bridge is present
- * the page instead base64-encodes the blob and hands it here, where it's written straight to
- * the device's Downloads folder using MediaStore (or legacy File APIs on very old Android
- * versions). See `_nativeSaveBlob()` in index.html for the JS side of this.
- */
-class AndroidDownloadBridge(private val context: Context) {
+class AndroidDownloadBridge(
+    private val context: Context,
+    private val onChooseFolderRequested: () -> Unit
+) {
 
     private val subfolder = "App Dichiarazioni di Conformità"
+    private val prefs by lazy { context.getSharedPreferences("backup_prefs", Context.MODE_PRIVATE) }
 
     @JavascriptInterface
     fun saveFile(base64DataUrl: String, filename: String, mimeType: String) {
@@ -42,6 +39,41 @@ class AndroidDownloadBridge(private val context: Context) {
             }
         } catch (e: Exception) {
             toast("Errore nel salvataggio del file: ${e.message}")
+        }
+    }
+
+    @JavascriptInterface
+    fun chooseBackupFolder() {
+        Handler(Looper.getMainLooper()).post { onChooseFolderRequested() }
+    }
+
+    @JavascriptInterface
+    fun getCustomBackupFolderName(): String? {
+        val uriString = prefs.getString(PREF_FOLDER_URI, null) ?: return null
+        return try {
+            DocumentFile.fromTreeUri(context, Uri.parse(uriString))?.name
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    @JavascriptInterface
+    fun saveToCustomFolder(base64DataUrl: String, filename: String, mimeType: String): Boolean {
+        val uriString = prefs.getString(PREF_FOLDER_URI, null) ?: return false
+        return try {
+            val dir = DocumentFile.fromTreeUri(context, Uri.parse(uriString)) ?: return false
+            val safeName = sanitizeFilename(filename)
+            dir.findFile(safeName)?.delete()
+            val newFile = dir.createFile(mimeType.ifBlank { "application/json" }, safeName)
+                ?: return false
+            val base64Payload =
+                if (base64DataUrl.contains(",")) base64DataUrl.substringAfter(",") else base64DataUrl
+            val bytes = Base64.decode(base64Payload, Base64.DEFAULT)
+            context.contentResolver.openOutputStream(newFile.uri)?.use { it.write(bytes) }
+                ?: return false
+            true
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -82,5 +114,9 @@ class AndroidDownloadBridge(private val context: Context) {
         Handler(Looper.getMainLooper()).post {
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
         }
+    }
+
+    companion object {
+        const val PREF_FOLDER_URI = "backup_folder_uri"
     }
 }
