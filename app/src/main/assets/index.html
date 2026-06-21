@@ -500,7 +500,7 @@ let autoBackupEnabled = storeGet('dc_autoBackupEnabled', true);
 // http(s) — browsers disable it entirely for pages opened as a local file
 // (file://), which is how this app is normally used. We feature-detect and
 // degrade gracefully to a normal download when it isn't available.
-const FS_ACCESS_SUPPORTED = (typeof window.showSaveFilePicker === 'function') && window.isSecureContext;
+const FS_ACCESS_SUPPORTED = (typeof window.showSaveFilePicker === 'function') && window.isSecureContext && !window.AndroidDownloadBridge;
 let backupFileHandle = null; // FileSystemFileHandle, only ever set when FS_ACCESS_SUPPORTED
 
 function idbOpen(){
@@ -1687,7 +1687,7 @@ function viewHome(){
       ${FS_ACCESS_SUPPORTED ? `
       <div class="util-btn" onclick="onChooseBackupLocation()"><span class="ic" style="background:var(--navy-tint);color:var(--navy)">${ICONS.folder}</span> ${backupFileHandle ? 'Cambia file di backup ('+esc(backupFileHandle.name)+')' : 'Scegli dove salvare i backup'} <span class="chev">${ICONS.chevron}</span></div>
       ` : `
-      <div class="hint" style="padding:8px 4px 0">Per scegliere tu stesso la cartella di destinazione, questa pagina dovrebbe essere aperta da un indirizzo web (http/https) e non come file locale: i browser bloccano questa possibilità per i file aperti direttamente dal telefono. Per ora i backup vanno nella cartella Download predefinita.</div>
+      <div class="hint" style="padding:8px 4px 0">Per scegliere tu stesso la cartella di destinazione serve aprire questa pagina da un indirizzo web (http/https) in un browser; non è possibile né da file locale né dentro l'app Android. I backup automatici vanno comunque nella cartella Download del dispositivo.</div>
       `}
     </div>
     <input type="file" id="importFileInput" accept="application/json,.json" style="display:none" onchange="onImportBackup(event)">
