@@ -15,10 +15,13 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.documentfile.provider.DocumentFile
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
@@ -85,6 +88,10 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Without this, the app's own navy top bar (with the back chevron) gets drawn
+        // underneath the status bar's clock/battery icons, so taps on the chevron are
+        // intercepted by the status bar instead — this fixes that.
+        enableEdgeToEdge()
 
         webView = WebView(this).apply {
             layoutParams = ViewGroup.LayoutParams(
@@ -93,6 +100,12 @@ class MainActivity : AppCompatActivity() {
             )
         }
         setContentView(webView)
+
+        ViewCompat.setOnApplyWindowInsetsListener(webView) { view, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
+            insets
+        }
 
         configureWebView(webView)
 
