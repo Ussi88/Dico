@@ -10,26 +10,19 @@ import android.provider.MediaStore
 import android.view.ViewGroup
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewClientCompat
 import java.io.File
 
-/**
- * Single-Activity wrapper around the "Dichiarazioni di Conformità" web app, bundled as a
- * static HTML/CSS/JS file at assets/index.html. Everything the app does — forms, the floor
- * plan editor, PDF handling, local data storage — runs inside the WebView exactly as it
- * does in a normal mobile browser. This class only adds the bits a plain browser tab can't
- * provide on its own: a stable, app-scoped place for localStorage to live (so saved data
- * survives between app launches, no matter how the file was opened), a working file picker
- * for attachment/photo uploads, and bridges for reliable file downloads and printing (see
- * AndroidDownloadBridge / AndroidPrintBridge).
- */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
@@ -82,10 +75,8 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(AndroidDownloadBridge(this), "AndroidDownloadBridge")
         webView.addJavascriptInterface(AndroidPrintBridge(this), "AndroidPrintBridge")
 
-        webView.loadUrl("file:///android_asset/index.html")
+        webView.loadUrl("https://appassets.androidplatform.net/assets/index.html")
 
-        // Let the in-app "back" navigation (e.g. closing a form, going back a screen in the
-        // app's own router) take priority over closing the whole Activity.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (webView.canGoBack()) {
@@ -102,10 +93,6 @@ class MainActivity : AppCompatActivity() {
     private fun configureWebView(webView: WebView) {
         val settings = webView.settings
         settings.javaScriptEnabled = true
-        // This is the key setting for this app: it's what makes localStorage (where every
-        // company/client/declaration/draft/floor-plan is saved) persist reliably between
-        // launches, scoped to this app's own storage rather than to whatever exact file
-        // path a browser happened to open.
         settings.domStorageEnabled = true
         settings.databaseEnabled = true
         settings.allowFileAccess = true
@@ -113,9 +100,17 @@ class MainActivity : AppCompatActivity() {
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         settings.setSupportZoom(false)
 
-        webView.webViewClient = object : WebViewClient() {
-            // Keep all navigation inside this single WebView — the app is a one-page,
-            // hash/state-router style SPA, it never needs to leave file:///android_asset/.
+        val assetLoader = WebViewAssetLoader.Builder()
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
+
+        webView.webViewClient = object : WebViewClientCompat() {
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: WebResourceRequest
+            ): WebResourceResponse? {
+                return assetLoader.shouldInterceptRequest(request.url)
+            }
         }
 
         webView.webChromeClient = object : WebChromeClient() {
@@ -149,8 +144,6 @@ class MainActivity : AppCompatActivity() {
                 ) {
                     createCameraCaptureIntent()?.let { initialIntents.add(it) }
                 } else {
-                    // Ask for next time; this picker still works fine without it (no
-                    // camera entry, gallery/file picking is unaffected).
                     cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
                 }
 
